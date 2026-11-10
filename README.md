@@ -152,31 +152,66 @@ out/
 
 ---
 
-## 多音字：整词同音替换
+## 多音字：两条路
 
-TTS 不看语境，`率领` 常读成 lǜ、`归还` 常读成 hái、`着急` 常读成 zhe。
+TTS 不看语境，`率领` 常读成 lǜ、`归还` 常读成 hái、`着急` 常读成 zhe。词表在 `scripts/rules/polyphone.json`，39 组 200 个词，覆盖率、行、重、长、少、为、还、都、差、转、弹、调、载、露、给、佛、的、着、强、几、中、正、数、恶、吓、缝、畜、圈、塞、劲、模、扎、扒、占、磨、空、似、可汗、单于。
 
-处理办法是**整词同音替换**：`率领 → 帅领`、`归还 → 归环`、`着急 → 招急`。读音对了，代价是文本里出现"错别字"——所以这份稿子**只适合朗读**。
+怎么用取决于你的引擎。
 
-要同时留一份能看的稿子，跑两次：
+### 路线 A：改文本（默认，任何引擎都能用）
+
+**整词同音替换**：`率领 → 帅领`、`归还 → 归环`、`着急 → 招急`。读音对了，代价是文本里出现"错别字"，这份稿子只适合朗读。
 
 ```bash
 python scripts/pipeline.py run "书.txt" -o out_tts                  # 朗读稿
 python scripts/pipeline.py run "书.txt" -o out_read --no-polyphone  # 阅读稿
 ```
 
-词表在 `scripts/rules/polyphone.json`，按字分组，40 组约 130 个词，覆盖率、行、重、长、少、为、还、都、差、转、弹、调、载、露、给、佛、的、着、强、几、中、正、数、恶、吓、缝、畜、圈、塞、劲、模、扎、扒、占、磨、空、似、可汗、单于。书里有它不认识的，补一条即可：
+### 路线 B：喂词典（GPT-SoVITS 专用，原文一个字不动）
+
+GPT-SoVITS 默认 `is_g2pw=True`，走 BERT 整句推理，然后由 `g2pw.correct_pronunciation()` 查 `polyphonic-fix.rep` 做手工覆盖。所以可以把词表直接导成词典：
+
+```bash
+python scripts/export_g2pw.py --write "D:/GPT-SoVITS/GPT_SoVITS/text/g2pw/polyphonic-fix.rep"
+```
+
+它会先备份成 `polyphonic-fix.rep.bak`、跳过已存在的词，然后追加 200 条：
+
+```
+率领:['shuai4', 'ling3']
+着急:['zhao2', 'ji2']
+银行:['yin2', 'hang2']
+似的:['shi4', 'de5']
+```
+
+重启 GPT-SoVITS 生效——`polyphonic.md5` 会发现词典变了并自动重建缓存，不用手动删。
+
+两个前提：
+
+- 脚本要在 **GPT-SoVITS 的 Python 环境**里跑，它依赖 pypinyin（那边自带）。
+- 如果你的 `chinese2.py` 里写死了 `is_g2pw = False`（走纯 pypinyin 路径），这个词典不生效，只能用路线 A。
+
+### 加词
+
+两条路线共用一份词表，加完重跑对应命令：
 
 ```json
 {
-  "char": "血", "pinyin": "xiě", "note": "口语读 xiě",
+  "char": "血", "pinyin": "xiě", "default_reading": "xie3",
+  "note": "口语读 xiě",
   "rules": {"血淋淋": "写淋淋"}
 }
 ```
 
-**没命中的词一律不动。** 它只替换词表里明确认可的整词，不会去猜——猜错比不处理更糟，因为你会以为已经处理好了。
+`default_reading` 是 TONE3 数字声调，路线 B 要用；`rules` 是替换词，路线 A 要用。个别词读音和整组不同时，用 `readings` 覆盖：
 
-`同行`、`都会` 这类一个词两种读法的，故意没收：替换成哪一种都有一半是错的。
+```json
+"readings": {"着手": "zhuo2", "着急": "zhao2"}
+```
+
+**两条路线都不猜。** 只处理词表里明确认可的整词。`同行`（一起走 / 同行业）、`都会`（城市 / 全都会）这类一个词两种读法的故意不收：替换成哪一种都有一半是错的。
+
+还有一个坑：G2PW 的 `correct_pronunciation` 有逐字回退——整词没命中时会拿**单字**去覆盖所有同字。所以这张表里绝不能出现单字条目，最短也得是两个字的固定搭配。
 
 ---
 

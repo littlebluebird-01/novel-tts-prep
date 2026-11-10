@@ -22,6 +22,11 @@ commands:
   - id: dry_run
     argv: python scripts/pipeline.py run <input> -o <outdir> --scan-only
     desc: 演算但不落盘，用于确认参数
+  - id: export_g2pw
+    argv: python scripts/export_g2pw.py --write <polyphonic-fix.rep>
+    desc: 把多音字表导出成 GPT-SoVITS(G2PW) 词典，原文不改、只修读音
+    requires: [pypinyin]        # GPT-SoVITS 环境自带
+    note: 仅在 chinese2.py 里 is_g2pw=True 时生效
 
 pipeline:
   - stage: clean
@@ -61,6 +66,8 @@ outputs:
     desc: 处理报告，含清洗明细、朗读化统计、分章映射、待复核项、下一步
   - path: <outdir>/manifest.json
     desc: 章节元数据（序号/标题/原始标题/字数/文件名）
+  - path: <polyphonic-fix.rep>
+    desc: 可选。G2PW 多音字词典追加条目，格式 词:['shuai4', 'ling3']，供 GPT-SoVITS 直接读取
   - path: <outdir>/uncertain.jsonl
     desc: 表外英文的近似音译，必须人工复核
   - path: <outdir>/flags.jsonl

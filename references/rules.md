@@ -117,6 +117,33 @@ python scripts/pipeline.py run 书.txt -o out_read --no-polyphone
 
 多音字替换排在朗读化**之后**。原因：朗读化会清掉中文之间的空格，`率 领` 变成 `率领` 之后才能整词命中。放在前面会漏掉被空格拆开的词。
 
+### 导出到 GPT-SoVITS 的 G2PW 词典
+
+`default_reading` / `readings` 是 TONE3 数字声调，专门给这条路用。GPT-SoVITS 默认 `is_g2pw=True`，`g2pw.correct_pronunciation()` 会先查 `polyphonic-fix.rep`：
+
+```python
+def correct_pronunciation(word, word_pinyins):
+    new_pinyins = pp_dict.get(word, "")
+    if new_pinyins == "":
+        for idx, w in enumerate(word):      # ← 逐字回退，很危险
+            w_pinyin = pp_dict.get(w, "")
+            if w_pinyin != "": word_pinyins[idx] = w_pinyin[0]
+        return word_pinyins
+    return new_pinyins
+```
+
+导出：
+
+```bash
+python scripts/export_g2pw.py --write "<GPT-SoVITS>/GPT_SoVITS/text/g2pw/polyphonic-fix.rep"
+```
+
+词典格式是 `词:['shuai4', 'ling3']`，`read_dict()` 用 `eval` 解析，所以值的写法必须是合法的 Python list 字面量。拼音数量必须与词的字数相等，否则下游的 `to_initials` / `to_finals_tone3` 会错位。
+
+编辑词典后不用手动删 `polyphonic.md5`——`get_dict()` 每次会重算两个 `.rep` 的 md5，不一致就自动重建 `polyphonic.pickle`。
+
+**表里绝不能有单字条目。** 上面那段逐字回退意味着：只要 `pp_dict` 里有 `'率'`，所有单字「率」都会被强制成同一个读音。整词不命中时才有单字回退，所以只收两个字的固定搭配就没问题。
+
 ---
 
 ## 朗读化处理顺序（改代码时别打乱）

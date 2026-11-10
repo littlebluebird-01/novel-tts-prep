@@ -125,6 +125,18 @@ out/
 
 细则见 `references/rules.md`。
 
+## GPT-SoVITS：可以不改原文
+
+`polyphone` 阶段默认改文本（`率领→帅领`）。如果引擎是 GPT-SoVITS，有更干净的路：它默认走 G2PW 整句推理，再由 `g2pw.correct_pronunciation()` 查 `polyphonic-fix.rep` 覆盖，所以把词表导成词典就行，原文一个字不动。
+
+```bash
+python scripts/export_g2pw.py --write "<GPT-SoVITS>/GPT_SoVITS/text/g2pw/polyphonic-fix.rep"
+```
+
+脚本要跑在 GPT-SoVITS 的 Python 环境里（依赖 pypinyin，那边自带）。会自动备份原词典、跳过已有词，重启生效。
+
+前提：`chinese2.py` 里 `is_g2pw = True`（默认）。若是 `False`，走纯 pypinyin 路径，这个词典不生效，只能用默认的同音替换。
+
 ## 已知边界
 
 - **多音字替换后的稿子只适合朗读**：`率领→帅领` 这种替换必然留下"错别字"。要能正常阅读的稿子，加 `--no-polyphone` 再跑一次。两份稿子各跑一遍是正常用法。
