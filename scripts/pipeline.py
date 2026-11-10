@@ -209,6 +209,18 @@ def build_report(
         out.append(f"| {m['seq']} | {m['title'][:40].replace('|', '\\|')} | {m['chars']} | {m['origin'][:20] or '-'} |")
     out.append("")
 
+    cross = [m for m in manifest if len(m.get("sources") or {}) > 1]
+    if cross:
+        out.append(f"**{len(cross)} 章由两个及以上原章拼成**，标题取占比最大的那个：\n")
+        out.append("| 序号 | 新标题 | 内容构成 |")
+        out.append("| --- | --- | --- |")
+        for m in cross[:10]:
+            comp = " + ".join(f"{k[:14]} {v}字" for k, v in list(m["sources"].items())[:3])
+            out.append(f"| {m['seq']} | {m['title'][:26].replace('|', '\\|')} | {comp} |")
+        if len(cross) > 10:
+            out.append(f"\n> 其余 {len(cross) - 10} 章见 `manifest.json` 的 sources 字段。")
+        out.append("")
+
     shorts = [m for m in manifest if m["chars"] < args.target * 0.5]
     out.append("## 下一步\n")
     todo = []

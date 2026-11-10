@@ -24,6 +24,7 @@ class Chapter:
     origin: str = ""
     part: int = 1
     merged: list[str] = field(default_factory=list)   # 被并入本章的原章标题
+    sources: dict[str, int] = field(default_factory=dict)  # 本块含各原章多少字
 
     @property
     def chars(self) -> int:
@@ -129,19 +130,60 @@ def reflow(
     tolerance: float = 0.15,
     unit: str = "章",
 ) -> list[Chapter]:
-    """忽略原章边界，全书按字数重排。
+    """忽略原章边界，全书按字数重排，但标题跟着内容走。
 
-    有声书要每章音频时长接近，原章边界是最大障碍：作者一章 945 字、下一章 3200 字，
-    尊重边界就永远均匀不了。重排后每章都贴着 target，代价是丢掉作者的分章标题。
+    有声书要每章音频时长接近，原章边界是最大障碍（作者一章 945、下一章 3200）。
+    重排后一块可能跨两个原章，所以标题按「这块内容主要来自哪个原章」来定：
+      - 原第三章被切成三块 -> 第三章 XXX（一）（二）（三）
+      - 某块 60% 是原第四章的内容 -> 用第四章标题，编号按第四章内部的第几块
+      - 原章没被切开 -> 标题保持原样，不加序号
     """
-    paras = [p for sec in sections for p in sec.paras if p.strip()]
-    if not paras:
+    flat: list[tuple[str, int]] = []
+    for si, sec in enumerate(sections):
+        for p in sec.paras:
+            if p.strip():
+                flat.append((p, si))
+    if not flat:
         return []
+
+    paras = [p for p, _ in flat]
     chunks = _split_uniform(paras, target, tolerance)
-    return [
-        Chapter(title=f"第{nvlib.int2cn(i + 1)}{unit}", paras=c, origin="")
-        for i, c in enumerate(chunks)
-    ]
+
+    # 把切好的块映射回来源，统计每块里各原章占多少字
+    blocks: list[tuple[int, list[str], dict[int, int]]] = []
+    cursor = 0
+    for chunk in chunks:
+        weight: dict[int, int] = {}
+        for p, si in flat[cursor: cursor + len(chunk)]:
+            weight[si] = weight.get(si, 0) + nvlib.count_read_chars(p)
+        cursor += len(chunk)
+        main = max(weight, key=weight.get) if weight else 0
+        blocks.append((main, chunk, weight))
+
+    parts_count: dict[int, int] = {}
+    for main, _, _ in blocks:
+        parts_count[main] = parts_count.get(main, 0) + 1
+
+    out: list[Chapter] = []
+    seen: dict[int, int] = {}
+    for main, chunk, weight in blocks:
+        seen[main] = seen.get(main, 0) + 1
+        base = sections[main].title or f"第{nvlib.int2cn(main + 1)}{unit}"
+        if parts_count.get(main, 1) > 1:
+            title = f"{base}（{nvlib.int2cn(seen[main])}）"
+        else:
+            title = base
+        out.append(Chapter(
+            title=title,
+            paras=chunk,
+            origin=sections[main].title,
+            part=seen[main],
+            sources={
+                (sections[si].title or f"第{nvlib.int2cn(si + 1)}{unit}"): w
+                for si, w in sorted(weight.items(), key=lambda x: -x[1])
+            },
+        ))
+    return out
 
 
 def merge_short_chapters(
@@ -222,5 +264,7 @@ def write_chapters(chapters: list[Chapter], outdir: str | Path, digits: int = 4)
             "part": ch.part,
             "chars": ch.chars,
             "file": name,
+            "merged": ch.merged,
+            "sources": ch.sources,
         })
     return manifest
