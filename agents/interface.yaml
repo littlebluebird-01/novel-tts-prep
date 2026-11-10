@@ -32,6 +32,11 @@ pipeline:
     module: scripts/normalize.py
     does: [日期, 时间, 百分比, 货币, 单位, 分数, 数值区间, 年份, 运算符, 序数, 小数, 整数, 英文音译, 符号, 引号配对]
     order_matters: true      # 见 references/rules.md
+  - stage: polyphone
+    module: scripts/polyphone.py
+    does: [多音字整词同音替换（率领→帅领）, 按词长降序匹配, 统计按字聚合]
+    never: [改词以外的字, 凭上下文猜读音]
+    side_effect: 替换后文本含“错别字”，只适合朗读；--no-polyphone 可关闭
   - stage: chapter
     module: scripts/chapter.py
     does: [识别原标题, 按朗读字数切分, 保留原题加“（续）”, 补章节编号, 一章一文件]
@@ -66,6 +71,10 @@ model_handoff:
     when: uncertain.jsonl 非空
     do: 确认近似音译，把常用词补进 scripts/rules/en2zh.json，重跑
     never: 为几个词改代码
+  - id: review_polyphone
+    when: 用户反馈某个词 TTS 读错
+    do: 在 scripts/rules/polyphone.json 补一条整词映射，重跑
+    never: 收有歧义的词（同行/都会），也绝不单字替换
   - id: review_flags
     when: flags.jsonl 非空
     do: 确认要删的，改 scripts/rules/ads.json 的 drop_lines，重跑
@@ -86,3 +95,4 @@ limits:
   - 分数默认标准读法（分母在前），可用 --fraction user 切换
   - 表外英文兜底音译质量不保证，必须复核
   - 去重只判 20 字以上整段完全相同，不动刻意重复的短句
+  - 多音字替换后的稿子只适合朗读，要阅读稿加 --no-polyphone；没命中的词不会硬猜

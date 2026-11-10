@@ -16,6 +16,7 @@ import chapter as chap
 import clean as cleaner
 import nvlib
 import normalize as norm
+import polyphone as poly
 
 
 def _p(msg: str = "") -> None:
@@ -51,6 +52,7 @@ def build_report(
     uncertain: list[dict],
     manifest: list[dict],
     total_chars: int,
+    pp: poly.Polyphoner,
     args,
 ) -> str:
     s = clean_res.stats
@@ -115,6 +117,25 @@ def build_report(
         out.append("无需改写。")
     out.append("")
 
+    if pp.enabled:
+        out.append("## 多音字改写\n")
+        if pp.total:
+            out.append(
+                f"共 {pp.total} 处同音替换，涉及 {len(pp.counts)} 个词。"
+                "**替换后仅供朗读**，人工阅读会看到错别字；需要干净的阅读稿请加 `--no-polyphone` 重跑一次。\n"
+            )
+            out.append("| 原文 | 改为 | 次数 | 说明 |")
+            out.append("| --- | --- | --- | --- |")
+            for w, r, c in pp.top_words(40):
+                ch = pp.word_group.get(w, "")
+                note = (pp.group_notes.get(ch, {}) or {}).get("pinyin", "")
+                out.append(f"| {w} | {r} | {c} | {ch} 读 {note} |")
+            if len(pp.counts) > 40:
+                out.append(f"\n> 另有 {len(pp.counts) - 40} 个词未列出。")
+        else:
+            out.append("词表里的词一个都没命中。若书里多音字仍读错，把词补进 `scripts/rules/polyphone.json`。")
+        out.append("")
+
     if uncertain:
         out.append("## 待复核：表外英文音译\n")
         out.append(f"共 {len(uncertain)} 个词走了近似音译，建议扫一眼，把常用词补进 "
@@ -163,6 +184,8 @@ def build_report(
         todo.append(f"{len(shorts)} 章偏短，如需均衡可考虑 `--merge-short`")
     if args.english == "keep":
         todo.append("本次未做英文音译，若要交 TTS 朗读请加 `--english transliterate`")
+    if pp.enabled and pp.total:
+        todo.append(f"多音字已替换 {pp.total} 处，此稿只适合朗读；要阅读稿请加 `--no-polyphone` 再跑一次")
     if not todo:
         todo.append("清洗与分章均无待处理项，可直接进 TTS")
     for i, t in enumerate(todo, 1):
@@ -196,6 +219,14 @@ def run(args) -> int:
         sec.paras = [nz.run(p)[0] for p in sec.paras]
         sec.title = nz.run(sec.title, strip_cjk_space=False)[0] if sec.title else ""
 
+    # 多音字替换放在朗读化之后：前面已经把中文之间的空格清掉了，词才能整词命中
+    pp = poly.Polyphoner(enabled=not args.no_polyphone)
+    if pp.enabled:
+        for sec in sections:
+            sec.paras = [pp.run(p) for p in sec.paras]
+            sec.title = pp.run(sec.title)
+        _p(poly.summarize(pp))
+
     chapters = chap.rechapter(
         sections,
         target=args.target,
@@ -218,7 +249,7 @@ def run(args) -> int:
 
     report = build_report(
         src=src, info=info, clean_res=clean_res, norm_stats=nz.stats,
-        uncertain=nz.uncertain, manifest=manifest, total_chars=total, args=args,
+        uncertain=nz.uncertain, manifest=manifest, total_chars=total, pp=pp, args=args,
     )
     nvlib.write_text(outdir / "report.md", report)
     nvlib.write_json(outdir / "manifest.json", manifest)
@@ -253,6 +284,8 @@ def main(argv=None) -> int:
     rp.add_argument("--join", choices=["auto", "always", "never"], default="auto",
                     help="断行合并策略（默认 auto：检测到一句一行才合并）")
     rp.add_argument("--no-dedupe", action="store_true", help="关闭段落去重")
+    rp.add_argument("--no-polyphone", action="store_true",
+                    help="关闭多音字同音替换（要干净阅读稿时用）")
     rp.add_argument("--english", choices=["transliterate", "keep"], default="transliterate",
                     help="英文处理：音译（默认）或保留")
     rp.add_argument("--fraction", choices=["cn", "user"], default="cn",
