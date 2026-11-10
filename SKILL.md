@@ -130,12 +130,13 @@ out/
 `polyphone` 阶段默认改文本（`率领→帅领`）。如果引擎是 GPT-SoVITS，有更干净的路：它默认走 G2PW 整句推理，再由 `g2pw.correct_pronunciation()` 查 `polyphonic-fix.rep` 覆盖，所以把词表导成词典就行，原文一个字不动。
 
 ```bash
-python scripts/export_g2pw.py --write "<GPT-SoVITS>/GPT_SoVITS/text/g2pw/polyphonic-fix.rep"
+python scripts/export_g2pw.py --where   # 先看探测到哪些词典
+python scripts/export_g2pw.py           # 找到一处就直接写，多处会列出让你选
 ```
 
-脚本要跑在 GPT-SoVITS 的 Python 环境里（依赖 pypinyin，那边自带）。会自动备份原词典、跳过已有词，重启生效。
+**不需要用户知道安装路径**，脚本按「环境变量 → 当前目录向上 → 各盘根目录的 `GPT-SoVITS*` / `*sovits*` / `*AudioBook*`」自动探测，0.3 秒出结果。写入前备份 `.bak`，只补词典缺的词；已有条目读音不一致会列出来并覆盖（`--skip-conflicts` 可保留）。重启生效。
 
-前提：`chinese2.py` 里 `is_g2pw = True`（默认）。若是 `False`，走纯 pypinyin 路径，这个词典不生效，只能用默认的同音替换。
+前提：用 GPT-SoVITS 自己的 Python 跑（依赖 pypinyin）；`chinese2.py` 里 `is_g2pw = True`（默认）。若是 `False`，走纯 pypinyin 路径，这个词典不生效，只能用默认的同音替换。
 
 ## 已知边界
 

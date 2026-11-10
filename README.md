@@ -169,27 +169,32 @@ python scripts/pipeline.py run "书.txt" -o out_read --no-polyphone  # 阅读稿
 
 ### 路线 B：喂词典（GPT-SoVITS 专用，原文一个字不动）
 
-GPT-SoVITS 默认 `is_g2pw=True`，走 BERT 整句推理，然后由 `g2pw.correct_pronunciation()` 查 `polyphonic-fix.rep` 做手工覆盖。所以可以把词表直接导成词典：
+GPT-SoVITS 默认 `is_g2pw=True`，走 BERT 整句推理，之后由 `g2pw.correct_pronunciation()` 查 `polyphonic-fix.rep` 做手工覆盖。所以把词表导成词典就行，原文一个字都不用改。
+
+**不需要告诉它装在哪**，脚本自己找：
+
+```bash
+python scripts/export_g2pw.py           # 自动探测并写入
+python scripts/export_g2pw.py --where   # 只看探测到哪些，不写
+```
+
+探测顺序：环境变量 `GPT_SOVITS_HOME` → 当前目录逐级向上 → 各盘根目录下的 `GPT-SoVITS*` / `*sovits*` / `*AudioBook*` 等目录，再在其中按已知布局定位 `*/text/g2pw/polyphonic-fix.rep`。找到一处直接写；找到多处会列出来让你选（`--all` 全写，`--write` 指定一个）。全程 0.3 秒左右。
+
+写入前自动备份成 `.bak`，并且只追加**词典里没有的**词；已有条目如果读音和我们不一致，会列出来并追加覆盖（`--skip-conflicts` 可保留原值）。
+
+重启 GPT-SoVITS 生效——`polyphonic.md5` 会发现词典变了并自动重建缓存，不用手动删 pickle。
+
+也可以手动指定：
 
 ```bash
 python scripts/export_g2pw.py --write "D:/GPT-SoVITS/GPT_SoVITS/text/g2pw/polyphonic-fix.rep"
 ```
 
-它会先备份成 `polyphonic-fix.rep.bak`、跳过已存在的词，然后追加 200 条：
+只有一条硬前提：`chinese2.py` 里 `is_g2pw` 必须是 `True`。若被改成 `False`（走纯 pypinyin 路径），这个词典不生效，只能用路线 A。
 
-```
-率领:['shuai4', 'ling3']
-着急:['zhao2', 'ji2']
-银行:['yin2', 'hang2']
-似的:['shi4', 'de5']
-```
+至于用哪个 Python 跑，不用管：脚本发现当前解释器没有 pypinyin 时，会自动找到 GPT-SoVITS 自带的那个（`.venv/Scripts/python.exe`、`python/python.exe`、`release/*/python/python.exe`）并切过去重跑。
 
-重启 GPT-SoVITS 生效——`polyphonic.md5` 会发现词典变了并自动重建缓存，不用手动删。
-
-两个前提：
-
-- 脚本要在 **GPT-SoVITS 的 Python 环境**里跑，它依赖 pypinyin（那边自带）。
-- 如果你的 `chinese2.py` 里写死了 `is_g2pw = False`（走纯 pypinyin 路径），这个词典不生效，只能用路线 A。
+> 实测：一份 45000 条的现有词典里，这 200 个词已经有 166 条读音正确，只补了 31 条、修正 3 条。所以词表不是越多越好——**先用 `--where` 看看你的词典覆盖了什么，再决定补哪些**。
 
 ### 加词
 

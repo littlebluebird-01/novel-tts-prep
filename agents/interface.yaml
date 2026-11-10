@@ -23,10 +23,10 @@ commands:
     argv: python scripts/pipeline.py run <input> -o <outdir> --scan-only
     desc: 演算但不落盘，用于确认参数
   - id: export_g2pw
-    argv: python scripts/export_g2pw.py --write <polyphonic-fix.rep>
-    desc: 把多音字表导出成 GPT-SoVITS(G2PW) 词典，原文不改、只修读音
+    argv: python scripts/export_g2pw.py [--where|--all|--write <rep>]
+    desc: 把多音字表导出成 GPT-SoVITS(G2PW) 词典，自动探测安装位置，原文不改只修读音
     requires: [pypinyin]        # GPT-SoVITS 环境自带
-    note: 仅在 chinese2.py 里 is_g2pw=True 时生效
+    note: 仅在 chinese2.py 里 is_g2pw=True 时生效；写入前自动备份 .bak
 
 pipeline:
   - stage: clean
