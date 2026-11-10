@@ -1,0 +1,8 @@
+# 仓库内统一 LF，避免 Windows 端 CRLF 污染
+* text=auto eol=lf
+
+# GBK 编码的测试样章按二进制处理，防止被当作文本转码
+tests/sample_hardwrap_gbk.txt -text
+
+*.png binary
+*.jpg binary
