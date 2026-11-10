@@ -45,7 +45,7 @@ class Normalizer:
         self.stats = {
             "dates": 0, "times": 0, "currency": 0, "percent": 0, "fraction": 0,
             "units": 0, "years": 0, "numbers": 0, "decimals": 0,
-            "english_hit": 0, "english_guess": 0,
+            "english_hit": 0, "english_guess": 0, "english_kept": 0,
         }
         self.uncertain: list[dict] = []
         self._table = self._build_table()
@@ -254,6 +254,11 @@ class Normalizer:
             if hit:
                 self.stats["english_hit"] += 1
                 return hit
+            # 评级/缩写（SSS、S、N、V、FG 这类）和孤立单字母不音译：
+            # 音译成“斯”“恩”反而听不懂，留给 TTS 自己读
+            if len(word) == 1 or (word.isupper() and len(word) <= 4):
+                self.stats["english_kept"] += 1
+                return word
             guess = self.guess(word)
             self.stats["english_guess"] += 1
             if len(self.uncertain) < 400:

@@ -253,6 +253,11 @@ def short_book_tag(title: str, max_len: int = 4) -> str:
         if cand:
             return cand[:max_len]
 
+    # 结尾是人物/身份词：谁说我不是正经冒险者 -> 冒险者（取末 3 字，身份词通常 2-3 字）
+    m = re.search(r"([\u4e00-\u9fff]{1,3}(?:者|人|师|徒|神|尊|帝|王|仙|魔|妖|侠|客|君|主))$", t)
+    if m:
+        return m.group(1)[-3:]
+
     # 前半段去掉动词前缀：重回五八 -> 五八
     h = _PREFIX_VERBS.sub("", head)
     h = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", h)

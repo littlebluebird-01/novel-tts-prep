@@ -122,6 +122,7 @@ def build_report(
         "dates": "日期", "times": "时间", "currency": "货币", "percent": "百分比",
         "fraction": "分数", "units": "单位", "years": "年份", "numbers": "数字",
         "decimals": "小数", "english_hit": "英文（词表命中）", "english_guess": "英文（兜底音译）",
+        "english_kept": "英文（评级字母，保留原样）",
     }
     hit = [(labels.get(k, k), v) for k, v in norm_stats.items() if v]
     if hit:
