@@ -11,15 +11,61 @@ import re
 
 import nvlib
 
-# ---------------- 兜底音译表（表里没有的词用这个近似） ----------------
-_DIGRAPHS = [
+# ---------------- 音节音译表（辅音 + 元音合成一个汉字） ----------------
+# 逐字母映射会把 bug 念成「布-乌-格」，按音节合成才是「巴-格」。
+_CONSONANTS = set("bcdfghjklmnpqrstvwxyz")
+_VOWELS = set("aeiou")
+
+_CV = {
+    "ba": "巴", "be": "贝", "bi": "比", "bo": "博", "bu": "布",
+    "ca": "卡", "ce": "塞", "ci": "西", "co": "科", "cu": "库",
+    "da": "达", "de": "德", "di": "迪", "do": "多", "du": "杜",
+    "fa": "法", "fe": "费", "fi": "菲", "fo": "福", "fu": "夫",
+    "ga": "加", "ge": "格", "gi": "吉", "go": "戈", "gu": "古",
+    "ha": "哈", "he": "赫", "hi": "希", "ho": "霍", "hu": "胡",
+    "ja": "贾", "je": "杰", "ji": "吉", "jo": "乔", "ju": "朱",
+    "ka": "卡", "ke": "凯", "ki": "基", "ko": "科", "ku": "库",
+    "la": "拉", "le": "莱", "li": "利", "lo": "洛", "lu": "卢",
+    "ma": "马", "me": "梅", "mi": "米", "mo": "莫", "mu": "穆",
+    "na": "纳", "ne": "内", "ni": "尼", "no": "诺", "nu": "努",
+    "pa": "帕", "pe": "佩", "pi": "皮", "po": "波", "pu": "普",
+    "qua": "夸", "que": "奎", "qui": "奎", "quo": "阔",
+    "ra": "拉", "re": "雷", "ri": "里", "ro": "罗", "ru": "鲁",
+    "sa": "萨", "se": "塞", "si": "西", "so": "索", "su": "苏",
+    "ta": "塔", "te": "特", "ti": "蒂", "to": "托", "tu": "图",
+    "va": "瓦", "ve": "维", "vi": "维", "vo": "沃", "vu": "武",
+    "wa": "瓦", "we": "韦", "wi": "威", "wo": "沃", "wu": "伍",
+    "xa": "克萨", "xe": "泽", "xi": "克西", "xo": "佐", "xu": "克苏",
+    "ya": "亚", "ye": "耶", "yi": "伊", "yo": "约", "yu": "尤",
+    "za": "扎", "ze": "泽", "zi": "齐", "zo": "佐", "zu": "祖",
+}
+
+# u 在闭音节（后面还跟辅音）读 /ʌ/，接近 a：bug -> 巴格、bus -> 巴斯、cut -> 卡特
+_CV_U_CLOSED = {
+    "bu": "巴", "cu": "卡", "du": "达", "fu": "法", "gu": "加",
+    "hu": "哈", "ju": "贾", "ku": "卡", "lu": "拉", "mu": "马",
+    "nu": "纳", "pu": "帕", "ru": "拉", "su": "萨", "tu": "塔",
+    "vu": "瓦", "zu": "扎", "qu": "夸", "xu": "克萨", "yu": "亚",
+}
+
+# r 音节与常见词尾
+_R_SYL = {"ar": "阿", "er": "尔", "ir": "尔", "or": "奥", "ur": "尔", "yr": "尔"}
+
+_TRIGRAPHS = [
     ("tion", "申"), ("sion", "申"), ("ture", "彻"), ("ough", "奥"),
-    ("igh", "艾"), ("th", "思"), ("sh", "什"), ("ch", "奇"), ("ph", "夫"),
-    ("wh", "沃"), ("ck", "克"), ("ng", "恩"), ("qu", "夸"),
+    ("igh", "艾"), ("ing", "英"), ("ble", "波"), ("ple", "普尔"),
+]
+
+_DIGRAPHS = [
+    ("th", "思"), ("sh", "什"), ("ch", "奇"), ("ph", "夫"), ("wh", "沃"),
+    ("ck", "克"), ("ng", "恩"), ("qu", "夸"), ("ll", "尔"), ("ss", "斯"),
+    ("tt", "特"), ("pp", "普"), ("mm", "姆"), ("nn", "恩"), ("rr", "尔"),
+    ("dd", "德"), ("gg", "格"), ("bb", "布"), ("ff", "夫"), ("zz", "兹"),
     ("ee", "伊"), ("ea", "伊"), ("oo", "乌"), ("ou", "奥"), ("ow", "奥"),
     ("oa", "欧"), ("ai", "艾"), ("ay", "艾"), ("ei", "艾"), ("ey", "艾"),
     ("oi", "奥伊"), ("aw", "奥"), ("ew", "尤"), ("au", "奥"), ("ue", "尤"),
 ]
+
 _SINGLE = {
     "a": "阿", "b": "布", "c": "克", "d": "德", "e": "埃", "f": "夫",
     "g": "格", "h": "赫", "i": "伊", "j": "杰", "k": "克", "l": "尔",
@@ -36,6 +82,27 @@ _UNITS = {
     "℃": "摄氏度", "°c": "摄氏度", "°": "度",
     "㎡": "平方米", "m²": "平方米", "m³": "立方米", "m3": "立方米",
 }
+
+
+def _looks_like_abbrev(word: str) -> bool:
+    """判断是不是缩写、评级或符号——这类保留原样，音译反而听不懂。
+
+    LV / SSS / XP（全大写）、mx / fg / jpg（没有元音读不出来）、ma / ka（辅音+元音的两三字母）
+    都是保留；bug / bank / Sherlock 这种能读成音节词的才音译。
+    """
+    w = word.strip()
+    if not w:
+        return True
+    if len(w) == 1:
+        return True
+    if w.isupper():
+        return True
+    low = w.lower()
+    if not re.search(r"[aeiouy]", low):
+        return True
+    if 2 <= len(low) <= 3 and low[-1] in "aeiou":
+        return True
+    return False
 
 
 class Normalizer:
@@ -74,29 +141,60 @@ class Normalizer:
         return None
 
     def guess(self, word: str) -> str:
-        """表外词的近似音译。质量只够“念得出来”，所以一定进 uncertain。"""
+        """按音节近似音译：bug -> 巴格，不是逐字母的「布乌格」。
+
+        质量只够「念得出来」，所以一律进 uncertain 等人工确认。
+        """
         w = word.lower()
         out: list[str] = []
-        i = 0
-        while i < len(w):
-            matched = False
+        i, n = 0, len(w)
+        while i < n:
+            hit = False
+            for src, dst in _TRIGRAPHS:
+                if w.startswith(src, i):
+                    out.append(dst)
+                    i += len(src)
+                    hit = True
+                    break
+            if hit:
+                continue
+
+            # r 音节 er/ar/or/ur：Sherlock -> 什尔洛克、Gordon -> 戈尔登
+            if i + 1 < n and w[i + 1] == "r" and w[i:i + 2] in _R_SYL:
+                out.append(_R_SYL[w[i:i + 2]])
+                i += 2
+                continue
+
             for src, dst in _DIGRAPHS:
                 if w.startswith(src, i):
                     out.append(dst)
                     i += len(src)
-                    matched = True
+                    hit = True
                     break
-            if matched:
+            if hit:
                 continue
+
+            # 辅音 + 元音合成一个音节
+            if i + 1 < n and w[i] in _CONSONANTS and w[i + 1] in _VOWELS:
+                key = w[i:i + 2]
+                syl = _CV.get(key)
+                if syl:
+                    # u 后面还跟辅音是闭音节，读 /ʌ/：bug、bus、cut
+                    if w[i + 1] == "u" and i + 2 < n and w[i + 2] not in _VOWELS:
+                        syl = _CV_U_CLOSED.get(key, syl)
+                    out.append(syl)
+                    i += 2
+                    continue
+
             ch = w[i]
-            if ch in _SINGLE:
-                # 双写辅音只念一次：ll -> 尔
-                if ch not in "aeiou" and i + 1 < len(w) and w[i + 1] == ch:
-                    i += 1
-                out.append(_SINGLE[ch])
+            if ch in _VOWELS:
+                out.append({"a": "阿", "e": "埃", "i": "伊", "o": "欧", "u": "乌"}[ch])
+            else:
+                out.append(_SINGLE.get(ch, ""))
             i += 1
+
         s = "".join(out)
-        s = re.sub(r"(.)\1+", r"\1", s)  # 去掉连续重复汉字
+        s = re.sub(r"(.)\1+", r"\1", s)   # 去掉连续重复汉字
         return s or word
 
     # ---------------- 主流程 ----------------
@@ -254,9 +352,8 @@ class Normalizer:
             if hit:
                 self.stats["english_hit"] += 1
                 return hit
-            # 评级/缩写（SSS、S、N、V、FG 这类）和孤立单字母不音译：
-            # 音译成“斯”“恩”反而听不懂，留给 TTS 自己读
-            if len(word) == 1 or (word.isupper() and len(word) <= 4):
+            # 缩写/评级/读不出来的字母组合保留原样，交给 TTS 读字母
+            if _looks_like_abbrev(word):
                 self.stats["english_kept"] += 1
                 return word
             guess = self.guess(word)
