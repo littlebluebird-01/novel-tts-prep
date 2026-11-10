@@ -210,6 +210,9 @@ class Normalizer:
         self.stats["fraction"] += 1
         if self.fraction == "user":  # 按“分子分母”直读，非标准但可按需切换
             return f"{nvlib.int2cn(a)}分之{nvlib.int2cn(b)}"
+        # 50/50、3/2 这类多半是比值或进度，读“比”比读“分之”自然
+        if a >= b:
+            return f"{nvlib.int2cn(a)}比{nvlib.int2cn(b)}"
         return f"{nvlib.int2cn(b)}分之{nvlib.int2cn(a)}"
 
     def _year(self, m: re.Match) -> str:

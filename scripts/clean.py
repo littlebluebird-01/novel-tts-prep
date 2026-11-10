@@ -34,6 +34,7 @@ class CleanResult:
     stats: dict = field(default_factory=dict)
     samples: list[dict] = field(default_factory=list)
     flags: list[dict] = field(default_factory=list)
+    dropped: list[dict] = field(default_factory=list)   # 全部删除记录，供逐条审计
 
 
 def clean_text(
@@ -42,6 +43,7 @@ def clean_text(
     dedupe: bool = True,
     strip_inline: bool = True,
     keep_flags: bool = True,
+    dedupe_near: int = 100,
 ) -> CleanResult:
     rules = nvlib.load_rules("ads")
     drop_rules = nvlib.compile_rules(rules.get("drop_lines", []))
@@ -64,6 +66,7 @@ def clean_text(
         "line_style": "",
     }
     flags: list[dict] = []
+    dropped: list[dict] = []
 
     # 1) 实体与标签
     text = html.unescape(raw)
@@ -96,8 +99,10 @@ def clean_text(
         if hit:
             stats["dropped_lines"] += 1
             stats["dropped_by_rule"][hit] = stats["dropped_by_rule"].get(hit, 0) + 1
+            rec = {"line": idx, "rule": hit, "text": s[:120]}
+            dropped.append(rec)
             if len(stats.setdefault("drop_samples", [])) < 12:
-                stats["drop_samples"].append({"rule": hit, "text": s[:80], "line": idx})
+                stats["drop_samples"].append(rec)
             continue
 
         # 3b) 行内剔除片段
@@ -110,12 +115,14 @@ def clean_text(
                 stats["stripped_inline"] += 1
                 if not s:  # 剔完变空行，说明整行都是广告
                     stats["dropped_lines"] += 1
+                    dropped.append({"line": idx, "rule": "行内清理后为空", "text": before[:120]})
                     continue
                 # 剔完可能只剩“（本章完）”这类尾巴，再查一次整行规则
                 hit2 = next((n for n, p in drop_rules if p.search(s)), None)
                 if hit2:
                     stats["dropped_lines"] += 1
                     stats["dropped_by_rule"][hit2] = stats["dropped_by_rule"].get(hit2, 0) + 1
+                    dropped.append({"line": idx, "rule": hit2, "text": s[:120], "original": before[:120]})
                     continue
 
         # 3c) 可疑但保留
@@ -140,9 +147,11 @@ def clean_text(
     # 5) 段落去重
     paras = [p for p in kept]
     if dedupe:
-        paras, dups = _dedupe(paras, min_len=20)
+        paras, dups = _dedupe(paras, min_len=20, near=dedupe_near)
         stats["deduped_paragraphs"] = dups["count"]
         stats["dedupe_samples"] = dups["samples"]
+        stats["far_duplicates"] = dups["far"]
+        dropped.extend(dups["dropped"])
 
     # 6) 空白与标点规整
     out_lines: list[str] = []
@@ -164,7 +173,7 @@ def clean_text(
         out_lines.pop()
 
     stats["output_lines"] = len(out_lines)
-    return CleanResult(text="\n".join(out_lines), stats=stats, flags=flags)
+    return CleanResult(text="\n".join(out_lines), stats=stats, flags=flags, dropped=dropped)
 
 
 def _detect_line_style(lines: list[str], end_punct: set[str]) -> str:
@@ -246,27 +255,62 @@ def _resplit_long(paras: list[str], limit: int = 150) -> list[str]:
     return out
 
 
-def _dedupe(paras: list[str], min_len: int = 20) -> tuple[list[str], dict]:
-    """整本范围内去掉完全重复的段落。只对足够长的段落生效，避免误伤短对话。"""
+_AD_HINT_RE = re.compile(
+    r"(首发|最新章节|书库|无错章节|无乱序|免费阅读|txt下载|全集下载|全文阅读|"
+    r"www\.|\.com|\.cc|\.net|\.la|\.me|加入书签|群号|公众号|扫码|点击阅读)",
+    re.I,
+)
+
+
+def _looks_like_ad(s: str) -> bool:
+    """判断一段重复内容像不像广告。只用于远距重复的取舍。"""
+    if not re.search(r"[\u4e00-\u9fff]", s):
+        return True     # 整段没有中文：正文不会这样整段重复，基本是广告注入
+    return bool(_AD_HINT_RE.search(s))
+
+
+def _dedupe(
+    paras: list[str], min_len: int = 20, near: int = 100, max_dropped: int = 2000
+) -> tuple[list[str], dict]:
+    """去掉重复段落。
+
+    只删「近距离」重复（默认 100 段内）：排版重复、防盗章重复、草稿残留都属于这类。
+    相隔很远的重复分两种：
+      - 内容像广告（纯英文注入、站点尾巴）→ 照样删，这类跨章出现几十次
+      - 中文正文的重复 → 只记录不删，那多半是不同章节各自描写同一件事，
+        删掉会让句子缺一段，读起来前后不接
+    """
     seen: dict[str, int] = {}
     out: list[str] = []
     count = 0
     samples: list[dict] = []
-    for p in paras:
+    dropped: list[dict] = []
+    far: list[dict] = []
+
+    for i, p in enumerate(paras):
         s = p.strip()
         if not s:
             out.append(p)
             continue
         key = re.sub(r"[\s\W_]+", "", s)
         if len(key) >= min_len and key in seen:
-            count += 1
-            if len(samples) < 8:
-                samples.append({"text": s[:80], "first_seen_para": seen[key]})
-            continue
+            first_i = seen[key]
+            near_dup = (i - first_i) <= near
+            if near_dup or _looks_like_ad(s):
+                count += 1
+                rule = "重复段落" if near_dup else "跨章重复广告"
+                if len(samples) < 8:
+                    samples.append({"text": s[:80], "first_seen_para": first_i})
+                if len(dropped) < max_dropped:
+                    dropped.append({"rule": rule, "text": s[:100], "line": first_i})
+                continue
+            if len(far) < 200:
+                far.append({"text": s[:80], "first_at": first_i, "again_at": i})
         if len(key) >= min_len:
-            seen[key] = len(out)
+            seen.setdefault(key, i)
         out.append(p)
-    return out, {"count": count, "samples": samples}
+
+    return out, {"count": count, "samples": samples, "dropped": dropped, "far": far}
 
 
 def summarize(result: CleanResult) -> str:

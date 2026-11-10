@@ -79,19 +79,25 @@ def _quotes_balanced(text: str) -> bool:
 
 
 def _split_paragraphs(paras: list[str], target: int) -> list[list[str]]:
-    """贪心累积到目标字数就切，遇到引号未闭合最多顺延 3 段。"""
+    """贪心累积到目标字数就切；引号没闭合时往后顺延，但最多 3 段。
+
+    顺延必须有上限：原文只要有一处漏了右括号，后面就永远等不到平衡，
+    整章会一刀不切（实测 7531 字的章就是这么来的）。
+    """
     parts: list[list[str]] = []
     buf: list[str] = []
     n = 0
+    deferred = 0
     for p in paras:
         buf.append(p)
         n += nvlib.count_read_chars(p)
         if n < target:
             continue
-        if not _quotes_balanced("\n".join(buf)) and len(buf) < len(paras):
+        if not _quotes_balanced("\n".join(buf)) and deferred < 3 and len(buf) < len(paras):
+            deferred += 1
             continue
         parts.append(buf)
-        buf, n = [], 0
+        buf, n, deferred = [], 0, 0
     if buf:
         parts.append(buf)
     # 尾巴太短就跟前一份并了，避免出现 200 字的碎章

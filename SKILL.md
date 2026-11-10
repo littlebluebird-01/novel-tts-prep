@@ -57,6 +57,8 @@ python "<skill>/scripts/pipeline.py" scan "书.txt"
 | `--english` | transliterate | `transliterate` 音译（english→英格丽史），`keep` 保留原样 |
 | `--fraction` | cn | `cn`=四分之三（标准读法），`user`=三分之四（按分子分母顺序） |
 | `--no-dedupe` | 关 | 关闭段落去重（原文有大量刻意重复时用） |
+| `--dedupe-near` | 100 | 只删相邻 N 段内的重复，更远的只记录不删 |
+| `--dedupe-global` | 关 | 整本去重不限距离（多版本拼接的书用，有误删风险） |
 | `--no-polyphone` | 关 | 关闭多音字同音替换。要一份能正常阅读的稿子时加这个 |
 | `--renumber` | 关 | 全书重新连续编号，丢弃作者原标题 |
 | `--merge-short` | 关 | 把过短的章并入前一章 |
@@ -72,6 +74,7 @@ out/
   manifest.json                     # 章序、标题、字数、来源
   uncertain.jsonl                   # 表外英文的近似音译，待复核
   flags.jsonl                       # 可疑行（作者感言/疑似广告），已保留
+  dropped_lines.jsonl               # 每条被删内容的审计记录，怀疑误删时查这里
 ```
 
 `report.md` 末尾有「下一步」，把待办直接列出来了。

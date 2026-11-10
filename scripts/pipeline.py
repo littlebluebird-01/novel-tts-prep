@@ -99,6 +99,18 @@ def build_report(
                 loc = r.get("line") or r.get("first_seen_para") or "-"
                 txt = str(r.get("text", "")).replace("|", "\\|")[:60]
                 out.append(f"| {loc} | {txt} |")
+
+    far = s.get("far_duplicates") or []
+    if far:
+        out.append(f"\n**跨章重复 {len(far)} 处，已保留未删。**")
+        out.append("这些段落隔得很远，多半是不同章节各写了一遍同一段描写；"
+                   "删掉会让句子前后接不上。确认要删再加 `--dedupe-global`。\n")
+        out.append("| 首现段落 | 再现段落 | 内容 |")
+        out.append("| --- | --- | --- |")
+        for f in far[:10]:
+            out.append(f"| {f['first_at']} | {f['again_at']} | {f['text'][:50].replace('|', '\\|')} |")
+        if len(far) > 10:
+            out.append(f"\n> 另有 {len(far) - 10} 处。")
     out.append("")
 
     out.append("## 朗读化\n")
@@ -208,6 +220,7 @@ def run(args) -> int:
         text,
         join_lines=args.join,
         dedupe=not args.no_dedupe,
+        dedupe_near=(10**9 if args.dedupe_global else args.dedupe_near),
     )
     _p(cleaner.summarize(clean_res))
 
@@ -233,7 +246,13 @@ def run(args) -> int:
         merge_short=args.merge_short,
         renumber=args.renumber,
     )
+    # 清掉没有实质内容的章：文件头的书名页、只剩“第一章/简介：”这种空壳
+    before = len(chapters)
+    chapters = [c for c in chapters if c.chars >= 50]
+    empty_dropped = before - len(chapters)
     total = sum(c.chars for c in chapters)
+    if empty_dropped:
+        _p(f"丢弃空章：{empty_dropped} 个（只有标题没有正文）")
     _p(f"分章结果：{len(chapters)} 章，合计 {total} 朗读字")
 
     if args.scan_only:
@@ -255,6 +274,7 @@ def run(args) -> int:
     nvlib.write_json(outdir / "manifest.json", manifest)
     nvlib.write_jsonl(outdir / "uncertain.jsonl", nz.uncertain)
     nvlib.write_jsonl(outdir / "flags.jsonl", clean_res.flags)
+    nvlib.write_jsonl(outdir / "dropped_lines.jsonl", clean_res.dropped)
 
     _p(f"\n输出目录：{outdir}")
     _p(f"  章节文件 {len(manifest)} 个 -> {outdir / 'chapters'}")
@@ -284,6 +304,10 @@ def main(argv=None) -> int:
     rp.add_argument("--join", choices=["auto", "always", "never"], default="auto",
                     help="断行合并策略（默认 auto：检测到一句一行才合并）")
     rp.add_argument("--no-dedupe", action="store_true", help="关闭段落去重")
+    rp.add_argument("--dedupe-near", type=int, default=100,
+                    help="只删相邻 N 段内的重复（默认 100），间隔更远的只记录不删")
+    rp.add_argument("--dedupe-global", action="store_true",
+                    help="整本去重、不限距离。多版本拼接的书用，但可能删掉不同章节的正常重复")
     rp.add_argument("--no-polyphone", action="store_true",
                     help="关闭多音字同音替换（要干净阅读稿时用）")
     rp.add_argument("--english", choices=["transliterate", "keep"], default="transliterate",
