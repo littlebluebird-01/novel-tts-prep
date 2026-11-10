@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import statistics
 import sys
 from pathlib import Path
 
@@ -172,6 +173,35 @@ def build_report(
             out.append(f"\n> 其余 {len(flags) - 40} 条见 `flags.jsonl`。")
         out.append("")
 
+    out.append("## 字数分布\n")
+    chars_list = [m["chars"] for m in manifest]
+    if chars_list:
+        mean = statistics.mean(chars_list)
+        sd = statistics.pstdev(chars_list) if len(chars_list) > 1 else 0.0
+        lo, hi = args.target * (1 - args.tolerance), args.target * (1 + args.tolerance)
+        inside = sum(1 for c in chars_list if lo <= c <= hi)
+        out.append(f"目标 {args.target} 字 ±{round(args.tolerance * 100)}%"
+                   f"（{int(lo)}–{int(hi)}）\n")
+        out.append("| 指标 | 值 |")
+        out.append("| --- | --- |")
+        out.append(f"| 章数 | {len(chars_list)} |")
+        out.append(f"| 最短 / 最长 | {min(chars_list)} / {max(chars_list)} |")
+        out.append(f"| 平均 | {int(mean)} |")
+        out.append(f"| 标准差 | {int(sd)} |")
+        out.append(f"| 落在目标区间 | {inside} 章（{round(inside / len(chars_list) * 100)}%）|")
+        out.append("")
+        outside = [m for m in manifest if not (lo <= m["chars"] <= hi)]
+        if outside:
+            out.append(f"区间外 {len(outside)} 章。原章本身短于目标时不会强行拉长（需要合并请加 "
+                       f"`--merge-short`）；段落粒度粗也会让个别章偏离。\n")
+            out.append("| 序号 | 标题 | 字数 |")
+            out.append("| --- | --- | --- |")
+            for m in outside[:8]:
+                out.append(f"| {m['seq']} | {m['title'][:30]} | {m['chars']} |")
+            if len(outside) > 8:
+                out.append(f"\n> 其余 {len(outside) - 8} 章见 `manifest.json`。")
+    out.append("")
+
     out.append("## 分章结果\n")
     out.append("| 序号 | 标题 | 字数 | 来源 |")
     out.append("| --- | --- | --- | --- |")
@@ -179,13 +209,7 @@ def build_report(
         out.append(f"| {m['seq']} | {m['title'][:40].replace('|', '\\|')} | {m['chars']} | {m['origin'][:20] or '-'} |")
     out.append("")
 
-    shorts = [m for m in manifest if m["chars"] < args.target * 0.3]
-    if shorts:
-        out.append(f"> 有 {len(shorts)} 章低于目标字数的 30%："
-                   + "、".join(f"第{m['seq']}章" for m in shorts[:10])
-                   + ("…" if len(shorts) > 10 else ""))
-        out.append("")
-
+    shorts = [m for m in manifest if m["chars"] < args.target * 0.5]
     out.append("## 下一步\n")
     todo = []
     if uncertain:
@@ -193,7 +217,7 @@ def build_report(
     if flags:
         todo.append(f"可疑行 {len(flags)} 行，确认是删除还是保留")
     if shorts:
-        todo.append(f"{len(shorts)} 章偏短，如需均衡可考虑 `--merge-short`")
+        todo.append(f"{len(shorts)} 章不足目标的一半，如需时长整齐可加 `--merge-short`")
     if args.english == "keep":
         todo.append("本次未做英文音译，若要交 TTS 朗读请加 `--english transliterate`")
     if pp.enabled and pp.total:
@@ -240,12 +264,17 @@ def run(args) -> int:
             sec.title = pp.run(sec.title)
         _p(poly.summarize(pp))
 
-    chapters = chap.rechapter(
-        sections,
-        target=args.target,
-        merge_short=args.merge_short,
-        renumber=args.renumber,
-    )
+    if args.reflow:
+        chapters = chap.reflow(sections, target=args.target, tolerance=args.tolerance)
+        _p("全书重排：已忽略原章边界，按字数均分（原标题不保留）")
+    else:
+        chapters = chap.rechapter(
+            sections,
+            target=args.target,
+            tolerance=args.tolerance,
+            merge_short=args.merge_short,
+            renumber=args.renumber,
+        )
     # 清掉没有实质内容的章：文件头的书名页、只剩“第一章/简介：”这种空壳
     before = len(chapters)
     chapters = [c for c in chapters if c.chars >= 50]
@@ -301,6 +330,8 @@ def main(argv=None) -> int:
     rp.add_argument("input")
     rp.add_argument("-o", "--outdir", default="./out")
     rp.add_argument("--target", type=int, default=3000, help="每章目标朗读字数（默认 3000）")
+    rp.add_argument("--tolerance", type=float, default=0.15,
+                    help="每章字数允许的偏差比例（默认 0.15）。有声书要音频时长接近，可收紧到 0.1")
     rp.add_argument("--join", choices=["auto", "always", "never"], default="auto",
                     help="断行合并策略（默认 auto：检测到一句一行才合并）")
     rp.add_argument("--no-dedupe", action="store_true", help="关闭段落去重")
@@ -315,7 +346,9 @@ def main(argv=None) -> int:
     rp.add_argument("--fraction", choices=["cn", "user"], default="cn",
                     help="分数读法：cn=四分之三（标准），user=三分之四（按分子分母顺序）")
     rp.add_argument("--renumber", action="store_true", help="全书重新连续编号，丢弃原标题")
-    rp.add_argument("--merge-short", action="store_true", help="把过短的章并入前一章")
+    rp.add_argument("--merge-short", action="store_true", help="把偏短的章并入前一章")
+    rp.add_argument("--reflow", action="store_true",
+                    help="忽略原章边界，全书按字数重排。有声书要时长整齐时用，代价是丢原标题")
     rp.add_argument("--digits", type=int, default=4, help="文件名序号位数（默认 4）")
     rp.add_argument("--scan-only", action="store_true", help="只演算不写文件")
 

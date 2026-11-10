@@ -23,6 +23,7 @@ class Chapter:
     paras: list[str] = field(default_factory=list)
     origin: str = ""
     part: int = 1
+    merged: list[str] = field(default_factory=list)   # 被并入本章的原章标题
 
     @property
     def chars(self) -> int:
@@ -78,50 +79,109 @@ def _quotes_balanced(text: str) -> bool:
     return sum(text.count(c) for c in _OPEN_Q) == sum(text.count(c) for c in _CLOSE_Q)
 
 
-def _split_paragraphs(paras: list[str], target: int) -> list[list[str]]:
-    """贪心累积到目标字数就切；引号没闭合时往后顺延，但最多 3 段。
+def _split_uniform(paras: list[str], target: int, tolerance: float = 0.15) -> list[list[str]]:
+    """按目标字数均分成若干块。
 
-    顺延必须有上限：原文只要有一处漏了右括号，后面就永远等不到平衡，
-    整章会一刀不切（实测 7531 字的章就是这么来的）。
+    有声书要求每章音频时长接近，所以不能用“累积到 target 就切”的贪心法——
+    那样前面每块正好 target、最后一块只剩零头，偏差能到 40%。
+    正确做法是先算要切几份，再把切点放在最接近等分位置的段落边界上。
     """
+    counts = [nvlib.count_read_chars(p) for p in paras]
+    total = sum(counts)
+    if total <= target * (1 + tolerance) or total <= 200 or len(paras) < 2:
+        return [paras]
+
+    n = max(2, int(round(total / target)))
+    aim = total / n
+
+    cum, acc = [], 0
+    for c in counts:
+        acc += c
+        cum.append(acc)
+
+    # 每个等分点选最靠近它的段落边界；引号没闭合时往后挪一两段
+    cuts: list[int] = []
+    for k in range(1, n):
+        want = aim * k
+        best = min(range(len(cum)), key=lambda i: abs(cum[i] - want))
+        shift = 0
+        while shift < 3 and best + shift < len(paras) - 1:
+            head = "\n".join(paras[: best + shift + 1])
+            if _quotes_balanced(head):
+                break
+            shift += 1
+        idx = min(best + shift, len(paras) - 2)
+        if not cuts or idx > cuts[-1]:
+            cuts.append(idx)
+
     parts: list[list[str]] = []
-    buf: list[str] = []
-    n = 0
-    deferred = 0
-    for p in paras:
-        buf.append(p)
-        n += nvlib.count_read_chars(p)
-        if n < target:
+    start = 0
+    for idx in cuts:
+        parts.append(paras[start: idx + 1])
+        start = idx + 1
+    parts.append(paras[start:])
+    return [p for p in parts if p]
+
+
+def reflow(
+    sections: list[Chapter],
+    target: int = 1500,
+    tolerance: float = 0.15,
+    unit: str = "章",
+) -> list[Chapter]:
+    """忽略原章边界，全书按字数重排。
+
+    有声书要每章音频时长接近，原章边界是最大障碍：作者一章 945 字、下一章 3200 字，
+    尊重边界就永远均匀不了。重排后每章都贴着 target，代价是丢掉作者的分章标题。
+    """
+    paras = [p for sec in sections for p in sec.paras if p.strip()]
+    if not paras:
+        return []
+    chunks = _split_uniform(paras, target, tolerance)
+    return [
+        Chapter(title=f"第{nvlib.int2cn(i + 1)}{unit}", paras=c, origin="")
+        for i, c in enumerate(chunks)
+    ]
+
+
+def merge_short_chapters(
+    chapters: list[Chapter], target: int = 1500, tolerance: float = 0.15
+) -> list[Chapter]:
+    """把明显偏短的章并入前一章，合并后不超过目标上限。"""
+    if not chapters:
+        return chapters
+    lo = target * (1 - tolerance)
+    hi = target * (1 + tolerance)
+    out: list[Chapter] = []
+    for ch in chapters:
+        if out and ch.chars < lo and out[-1].chars + ch.chars <= hi * 1.02:
+            out[-1].paras.extend(ch.paras)
+            out[-1].merged.append(ch.title)
             continue
-        if not _quotes_balanced("\n".join(buf)) and deferred < 3 and len(buf) < len(paras):
-            deferred += 1
-            continue
-        parts.append(buf)
-        buf, n, deferred = [], 0, 0
-    if buf:
-        parts.append(buf)
-    # 尾巴太短就跟前一份并了，避免出现 200 字的碎章
-    if len(parts) >= 2 and nvlib.count_read_chars("\n".join(parts[-1])) < target * 0.25:
-        parts[-2].extend(parts.pop())
-    return parts
+        out.append(ch)
+    return out
 
 
 def rechapter(
     sections: list[Chapter],
     target: int = 3000,
-    max_ratio: float = 1.4,
+    tolerance: float = 0.15,
     merge_short: bool = False,
     renumber: bool = False,
 ) -> list[Chapter]:
-    """按目标字数重分章。target 是“目标朗读字数”。"""
+    """按目标字数重分章。target 是「目标朗读字数」，tolerance 控制允许的偏差。
+
+    有声书要保证每章音频时长接近，所以 target 给 1500 就尽量每章 1500，
+    偏差主要来自段落粒度——段落越长，实际每章的波动越大。
+    """
     out: list[Chapter] = []
 
     for sec in sections:
         chars = sec.chars
-        if chars <= target * max_ratio or chars <= 200:
+        if chars <= target * (1 + tolerance) or chars <= 200:
             out.append(sec)
             continue
-        chunks = _split_paragraphs(sec.paras, target)
+        chunks = _split_uniform(sec.paras, target, tolerance)
         for i, chunk in enumerate(chunks):
             if i == 0:
                 title = sec.title
@@ -131,7 +191,7 @@ def rechapter(
             out.append(Chapter(title=title, paras=chunk, origin=sec.title, part=i + 1))
 
     if merge_short:
-        out = _merge_short(out, target)
+        out = merge_short_chapters(out, target, tolerance)
 
     if renumber:
         for i, ch in enumerate(out, 1):
@@ -143,19 +203,6 @@ def rechapter(
         if not ch.title:
             counter += 1
             ch.title = f"第{nvlib.int2cn(counter)}章"
-    return out
-
-
-def _merge_short(chapters: list[Chapter], target: int) -> list[Chapter]:
-    """把明显过短的章并到前一章（默认关闭，会破坏与原章的一一对应）。"""
-    if not chapters:
-        return chapters
-    out = [chapters[0]]
-    for ch in chapters[1:]:
-        if ch.chars < target * 0.3 and out[-1].chars + ch.chars < target * 1.5:
-            out[-1].paras.extend(ch.paras)
-        else:
-            out.append(ch)
     return out
 
 
