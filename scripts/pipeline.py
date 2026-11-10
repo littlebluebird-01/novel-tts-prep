@@ -276,10 +276,7 @@ def run(args) -> int:
             sec.title = pp.run(sec.title)
         _p(poly.summarize(pp))
 
-    if args.reflow:
-        chapters = chap.reflow(sections, target=args.target, tolerance=args.tolerance)
-        _p("全书重排：已忽略原章边界，按字数均分（原标题不保留）")
-    else:
+    if args.keep_sections:
         chapters = chap.rechapter(
             sections,
             target=args.target,
@@ -287,6 +284,10 @@ def run(args) -> int:
             merge_short=args.merge_short,
             renumber=args.renumber,
         )
+        _p("按原章边界切分：章号会重复（同一章的后半段标“续”）")
+    else:
+        chapters = chap.reflow(sections, target=args.target, tolerance=args.tolerance)
+        _p("全书按字数重排：章号连续，原标题移到章号后面")
     # 清掉没有实质内容的章：文件头的书名页、只剩“第一章/简介：”这种空壳
     before = len(chapters)
     chapters = [c for c in chapters if c.chars >= 50]
@@ -341,9 +342,14 @@ def main(argv=None) -> int:
     rp = sub.add_parser("run", help="跑全流程")
     rp.add_argument("input")
     rp.add_argument("-o", "--outdir", default="./out")
-    rp.add_argument("--target", type=int, default=3000, help="每章目标朗读字数（默认 3000）")
-    rp.add_argument("--tolerance", type=float, default=0.15,
-                    help="每章字数允许的偏差比例（默认 0.15）。有声书要音频时长接近，可收紧到 0.1")
+    rp.add_argument("--target", type=int, default=1500,
+                    help="每章目标朗读字数（默认 1500，有声书常用；纯阅读可给 3000）")
+    rp.add_argument("--tolerance", type=float, default=0.1,
+                    help="每章字数允许的偏差比例（默认 0.1）")
+    rp.add_argument("--keep-sections", action="store_true",
+                    help="保留原章边界，不全书重排。会让章号重复、字数不齐，一般不用")
+    rp.add_argument("--reflow", action="store_true",
+                    help="(兼容旧参数) 全书重排，现在已是默认行为")
     rp.add_argument("--join", choices=["auto", "always", "never"], default="auto",
                     help="断行合并策略（默认 auto：检测到一句一行才合并）")
     rp.add_argument("--no-dedupe", action="store_true", help="关闭段落去重")
@@ -359,8 +365,6 @@ def main(argv=None) -> int:
                     help="分数读法：cn=四分之三（标准），user=三分之四（按分子分母顺序）")
     rp.add_argument("--renumber", action="store_true", help="全书重新连续编号，丢弃原标题")
     rp.add_argument("--merge-short", action="store_true", help="把偏短的章并入前一章")
-    rp.add_argument("--reflow", action="store_true",
-                    help="忽略原章边界，全书按字数重排。有声书要时长整齐时用，代价是丢原标题")
     rp.add_argument("--digits", type=int, default=4, help="文件名序号位数（默认 4）")
     rp.add_argument("--scan-only", action="store_true", help="只演算不写文件")
 
