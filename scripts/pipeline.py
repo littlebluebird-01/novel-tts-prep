@@ -54,6 +54,7 @@ def build_report(
     manifest: list[dict],
     total_chars: int,
     pp: poly.Polyphoner,
+    front_chars: int,
     args,
 ) -> str:
     s = clean_res.stats
@@ -69,6 +70,8 @@ def build_report(
     out.append(f"| 输出朗读字数 | {total_chars} |")
     out.append(f"| 识别原章数 | {info['headings']} |")
     out.append(f"| 输出章数 | {len(manifest)} |")
+    if front_chars:
+        out.append(f"| 移除前置简介 | {front_chars} 字（另存 `front_matter.txt`） |")
     out.append(f"| 目标字数/章 | {args.target} |")
     out.append(f"| 英文处理 | {'音译' if args.english == 'transliterate' else '保留'} |")
     out.append(f"| 分数读法 | {'四分之三（标准）' if args.fraction == 'cn' else '三分之四（按序）'} |")
@@ -263,6 +266,15 @@ def run(args) -> int:
     sections = chap.parse_sections(clean_res.text)
     _p(f"结构识别：{len(sections)} 段")
 
+    # 移除正文前的内容简介：书名、标签、梗概。简介另行单独做，不能混进第一章
+    book_title = nvlib.guess_book_title(src.name)
+    front: list[chap.Chapter] = []
+    while len(sections) > 1 and chap.is_front_matter(sections[0], book_title):
+        front.append(sections.pop(0))
+    front_chars = sum(s.chars for s in front)
+    if front:
+        _p(f"移除前置简介 {front_chars} 字，正文从「{sections[0].title}」开始")
+
     nz = norm.Normalizer(fraction=args.fraction, english=args.english)
     for sec in sections:
         sec.paras = [nz.run(p)[0] for p in sec.paras]
@@ -310,13 +322,17 @@ def run(args) -> int:
 
     report = build_report(
         src=src, info=info, clean_res=clean_res, norm_stats=nz.stats,
-        uncertain=nz.uncertain, manifest=manifest, total_chars=total, pp=pp, args=args,
+        uncertain=nz.uncertain, manifest=manifest, total_chars=total, pp=pp,
+        front_chars=front_chars, args=args,
     )
     nvlib.write_text(outdir / "report.md", report)
     nvlib.write_json(outdir / "manifest.json", manifest)
     nvlib.write_jsonl(outdir / "uncertain.jsonl", nz.uncertain)
     nvlib.write_jsonl(outdir / "flags.jsonl", clean_res.flags)
     nvlib.write_jsonl(outdir / "dropped_lines.jsonl", clean_res.dropped)
+    if front:
+        nvlib.write_text(outdir / "front_matter.txt",
+                         "\n\n".join(c.to_text() for c in front))
 
     _p(f"\n输出目录：{outdir}")
     _p(f"  章节文件 {len(manifest)} 个 -> {outdir / 'chapters'}")

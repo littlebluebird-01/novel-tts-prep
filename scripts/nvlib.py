@@ -207,3 +207,15 @@ def sanitize_filename(name: str, limit: int = 80) -> str:
     if len(s) > limit:
         s = s[:limit].rstrip()
     return s or "untitled"
+
+
+def guess_book_title(filename: str) -> str:
+    """从文件名猜书名：「异兽修仙 作者：佚名小说.txt」-> 「异兽修仙」。
+
+    用来识别正文前的简介区——简介里几乎一定会出现书名。
+    """
+    base = Path(filename).stem
+    base = re.sub(r"\.(repaired|clean|final|fixed|精校|完结)$", "", base, flags=re.I)
+    base = re.split(r"\s*[（(]?\s*作者\s*[：:]", base)[0]
+    base = re.sub(r"^\s*《(.+)》\s*$", r"\1", base)
+    return base.strip()

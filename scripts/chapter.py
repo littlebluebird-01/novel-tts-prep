@@ -138,6 +138,27 @@ def strip_chapter_number(title: str) -> str:
     return _CHAPTER_PREFIX_RE.sub("", title or "").strip()
 
 
+_FRONT_TITLES = re.compile(
+    r"^(序|序言|序文|简介|内容简介|作品简介|本书简介|文案|前言|关于本书|故事简介)$"
+)
+
+
+def is_front_matter(sec: Chapter, book_title: str = "") -> bool:
+    """判断这一段是不是正文前的内容简介。
+
+    内容简介要单独做，不能混进第一章——否则第一章开头几百字都在念书名和梗概。
+    判据：正文里出现书名（简介几乎必然提到书名），或标题是简介类词且篇幅不长。
+    序章/楔子/引子不算，那些是正文的开始。
+    """
+    if not sec.paras:
+        return False
+    text = "\n".join(sec.paras)
+    if book_title and len(book_title) >= 4 and book_title in text:
+        return True
+    title = (sec.title or "").strip()
+    return bool(_FRONT_TITLES.match(title)) and sec.chars < 1200
+
+
 def reflow(
     sections: list[Chapter],
     target: int = 1500,
