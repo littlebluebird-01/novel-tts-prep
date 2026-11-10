@@ -304,6 +304,13 @@ def run(args) -> int:
     before = len(chapters)
     chapters = [c for c in chapters if c.chars >= 50]
     empty_dropped = before - len(chapters)
+    # 每章标题最前面加简化书名，平台报错只给章标题时也能认出是哪本书
+    tag = args.book_tag or nvlib.short_book_tag(book_title)
+    if tag:
+        for ch in chapters:
+            ch.title = f"{tag} {ch.title}"
+        _p(f"章标题前缀：{tag}（不对就用 --book-tag 指定）")
+
     total = sum(c.chars for c in chapters)
     if empty_dropped:
         _p(f"丢弃空章：{empty_dropped} 个（只有标题没有正文）")
@@ -381,6 +388,8 @@ def main(argv=None) -> int:
                     help="分数读法：cn=四分之三（标准），user=三分之四（按分子分母顺序）")
     rp.add_argument("--renumber", action="store_true", help="全书重新连续编号，丢弃原标题")
     rp.add_argument("--merge-short", action="store_true", help="把偏短的章并入前一章")
+    rp.add_argument("--book-tag", default="",
+                    help="章标题最前面加的书名简称（如「绿头鸭」）。默认从文件名自动猜，猜得不对就用这个")
     rp.add_argument("--digits", type=int, default=4, help="文件名序号位数（默认 4）")
     rp.add_argument("--scan-only", action="store_true", help="只演算不写文件")
 

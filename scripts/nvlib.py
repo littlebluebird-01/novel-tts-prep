@@ -219,3 +219,45 @@ def guess_book_title(filename: str) -> str:
     base = re.split(r"\s*[（(]?\s*作者\s*[：:]", base)[0]
     base = re.sub(r"^\s*《(.+)》\s*$", r"\1", base)
     return base.strip()
+
+
+_PREFIX_VERBS = re.compile(r"^(重回|重生|重启|重来|再回|回到|我在|我靠|我的|带着|开局|签到|绑定|获得|成为)")
+
+
+def short_book_tag(title: str, max_len: int = 4) -> str:
+    """从书名里取一个能认人的短标签，放在每章标题最前面。
+
+    平台报错时往往只给章标题，带个短书名才知道是哪本书。
+    「异兽修仙：从绿头鸭到凤凰仙尊」-> 绿头鸭
+    「重回五八：从肝职业面板开始」  -> 五八
+    猜得不准就用 --book-tag 直接指定。
+    """
+    t = (title or "").strip()
+    if not t:
+        return ""
+    parts = re.split(r"[：:\-—–]", t, maxsplit=1)
+    head = parts[0].strip()
+    tail = parts[1].strip() if len(parts) > 1 else ""
+
+    # 「从 X 到 Y」取 X
+    m = re.search(r"从\s*(.{2,8}?)\s*到", tail or t)
+    if m:
+        cand = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", m.group(1))
+        if cand:
+            return cand[:max_len]
+
+    # 「从 X 开始/成就 Y」取 X：从漕工开始成就人仙 -> 漕工
+    m = re.search(r"^从\s*(.{2,6}?)\s*(?:开始|成就|崛起|走向|踏上|逆袭|杀出|崛起)", t)
+    if m:
+        cand = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", m.group(1))
+        if cand:
+            return cand[:max_len]
+
+    # 前半段去掉动词前缀：重回五八 -> 五八
+    h = _PREFIX_VERBS.sub("", head)
+    h = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", h)
+    if 2 <= len(h) <= max_len + 2:
+        return h[:max_len]
+
+    base = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", t)
+    return base[:max_len]
