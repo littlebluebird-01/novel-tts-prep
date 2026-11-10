@@ -1,0 +1,88 @@
+name: novel-tts-prep
+display_name: 网文清洗与朗读化
+display_name_en: Web Novel Cleanup & TTS Prep
+version: 1.0.0
+kind: workflow
+entry: SKILL.md
+
+runtime:
+  language: python
+  min_version: "3.9"
+  dependencies: []          # 纯标准库，无第三方包
+  stdout_encoding: utf-8
+
+# 确定性工作全部由脚本承担，结果可复现
+commands:
+  - id: scan
+    argv: python scripts/pipeline.py scan <input>
+    desc: 只体检，输出编码、字数、章节数、英文词数，不写文件
+  - id: run
+    argv: python scripts/pipeline.py run <input> -o <outdir> [--target N]
+    desc: 清洗 + 朗读化 + 重分章 + 一章一文件 + 报告
+  - id: dry_run
+    argv: python scripts/pipeline.py run <input> -o <outdir> --scan-only
+    desc: 演算但不落盘，用于确认参数
+
+pipeline:
+  - stage: clean
+    module: scripts/clean.py
+    does: [去广告与水印, 删重复段落, 清乱码, 合并硬折行, 重分段, 统一标点]
+    never: [改写正文句子, 调整段落语义]
+  - stage: normalize
+    module: scripts/normalize.py
+    does: [日期, 时间, 百分比, 货币, 单位, 分数, 数值区间, 年份, 运算符, 序数, 小数, 整数, 英文音译, 符号, 引号配对]
+    order_matters: true      # 见 references/rules.md
+  - stage: chapter
+    module: scripts/chapter.py
+    does: [识别原标题, 按朗读字数切分, 保留原题加“（续）”, 补章节编号, 一章一文件]
+    never: [重排正文顺序, 跨章搬运段落]
+  - stage: report
+    module: scripts/pipeline.py
+    does: [report.md, manifest.json, uncertain.jsonl, flags.jsonl]
+
+inputs:
+  - name: source
+    type: file
+    formats: [txt]
+    encodings: [utf-8, utf-8-sig, gb18030, big5, utf-16]
+    note: epub/docx 需先转 txt；原文件只读，绝不覆盖
+
+outputs:
+  - path: <outdir>/chapters/NNNN_<title>.txt
+    desc: 一章一个文件，UTF-8，标题 + 两行空行 + 正文
+  - path: <outdir>/book_clean.txt
+    desc: 全书合并稿
+  - path: <outdir>/report.md
+    desc: 处理报告，含清洗明细、朗读化统计、分章映射、待复核项、下一步
+  - path: <outdir>/manifest.json
+    desc: 章节元数据（序号/标题/原始标题/字数/文件名）
+  - path: <outdir>/uncertain.jsonl
+    desc: 表外英文的近似音译，必须人工复核
+  - path: <outdir>/flags.jsonl
+    desc: 可疑行（已保留），待确认删除或保留
+
+model_handoff:
+  - id: review_english
+    when: uncertain.jsonl 非空
+    do: 确认近似音译，把常用词补进 scripts/rules/en2zh.json，重跑
+    never: 为几个词改代码
+  - id: review_flags
+    when: flags.jsonl 非空
+    do: 确认要删的，改 scripts/rules/ads.json 的 drop_lines，重跑
+    never: 在输出文件里手工删（重跑会回来）
+  - id: polish
+    when: 用户明确要求深度润色，且前 3 章确认是机翻腔
+    do: 按 references/polish.md 分批润色
+    never: 改情节、改数字、加描写、整本一次性塞入
+
+quality_gates:
+  - 报告里“下一步”为空，才算清洗完成
+  - 抽查首章与末章，确认无广告残留、无越界改写
+  - 分章字数落在 target 的 0.3~1.6 倍之间
+
+limits:
+  - 不做英译中语义翻译，只做音译读法
+  - 不抓取正文、不解析 epub
+  - 分数默认标准读法（分母在前），可用 --fraction user 切换
+  - 表外英文兜底音译质量不保证，必须复核
+  - 去重只判 20 字以上整段完全相同，不动刻意重复的短句
