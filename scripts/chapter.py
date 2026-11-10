@@ -124,19 +124,33 @@ def _split_uniform(paras: list[str], target: int, tolerance: float = 0.15) -> li
     return [p for p in parts if p]
 
 
+_CHAPTER_PREFIX_RE = re.compile(
+    r"^第\s*[0-9０-９一二三四五六七八九十百千万零两]{1,8}\s*[章回节節話话集卷部篇]\s*[、.．,:：]?\s*"
+)
+
+
+def strip_chapter_number(title: str) -> str:
+    """去掉标题里的原章号，只留标题正文。
+
+    「第2章 家常菜」-> 「家常菜」；「序言」-> 「序言」（本来就没有章号）。
+    重排后章号由新序号接管，原标题里的号不能留着，否则会和章号打架。
+    """
+    return _CHAPTER_PREFIX_RE.sub("", title or "").strip()
+
+
 def reflow(
     sections: list[Chapter],
     target: int = 1500,
     tolerance: float = 0.15,
     unit: str = "章",
 ) -> list[Chapter]:
-    """忽略原章边界，全书按字数重排，但标题跟着内容走。
+    """忽略原章边界，全书按字数重排；章号连续，原标题挪到内容位置。
 
     有声书要每章音频时长接近，原章边界是最大障碍（作者一章 945、下一章 3200）。
-    重排后一块可能跨两个原章，所以标题按「这块内容主要来自哪个原章」来定：
-      - 原第三章被切成三块 -> 第三章 XXX（一）（二）（三）
-      - 某块 60% 是原第四章的内容 -> 用第四章标题，编号按第四章内部的第几块
-      - 原章没被切开 -> 标题保持原样，不加序号
+    重排后一章可能跨两个原章，所以：
+      - 章号：全书连续重编（第一章、第二章……），保证不跳号
+      - 标题内容：取覆盖字数最多的原章标题（去掉它原来的章号）
+      - 块序号：该原章被切成 N 块时加（一）（二），只切一块就不加
     """
     flat: list[tuple[str, int]] = []
     for si, sec in enumerate(sections):
@@ -149,7 +163,6 @@ def reflow(
     paras = [p for p, _ in flat]
     chunks = _split_uniform(paras, target, tolerance)
 
-    # 把切好的块映射回来源，统计每块里各原章占多少字
     blocks: list[tuple[int, list[str], dict[int, int]]] = []
     cursor = 0
     for chunk in chunks:
@@ -166,20 +179,19 @@ def reflow(
 
     out: list[Chapter] = []
     seen: dict[int, int] = {}
-    for main, chunk, weight in blocks:
+    for seq, (main, chunk, weight) in enumerate(blocks, 1):
         seen[main] = seen.get(main, 0) + 1
-        base = sections[main].title or f"第{nvlib.int2cn(main + 1)}{unit}"
-        if parts_count.get(main, 1) > 1:
-            title = f"{base}（{nvlib.int2cn(seen[main])}）"
-        else:
-            title = base
+        body = strip_chapter_number(sections[main].title or "")
+        suffix = f"（{nvlib.int2cn(seen[main])}）" if parts_count.get(main, 1) > 1 else ""
+        head = f"第{nvlib.int2cn(seq)}{unit}"
+        title = (f"{head} {body}{suffix}" if body else f"{head}{suffix}").strip()
         out.append(Chapter(
             title=title,
             paras=chunk,
             origin=sections[main].title,
             part=seen[main],
             sources={
-                (sections[si].title or f"第{nvlib.int2cn(si + 1)}{unit}"): w
+                (sections[si].title or f"原第{nvlib.int2cn(si + 1)}{unit}"): w
                 for si, w in sorted(weight.items(), key=lambda x: -x[1])
             },
         ))
